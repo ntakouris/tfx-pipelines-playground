@@ -1,5 +1,6 @@
 .vscode
 pipeline_out/
+metadata.db
 
 .DS_Store
 bucket/

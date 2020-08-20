@@ -65,11 +65,20 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
   # Brings data into the pipeline or otherwise joins/converts training data.
   example_gen = CsvExampleGen(input=examples)
 
+  statistics_gen = StatisticsGen(examples=example_gen.outputs['examples'])
+  schema_gen = SchemaGen(
+      statistics=statistics_gen.outputs['statistics'],
+      infer_feature_shape=False)
+
+  example_validator = ExampleValidator(
+      statistics=statistics_gen.outputs['statistics'],
+      schema=schema_gen.outputs['schema'])
+
   return pipeline.Pipeline(
       pipeline_name=pipeline_name,
       pipeline_root=pipeline_root,
       components=[
-          example_gen
+          example_gen, statistics_gen, schema_gen, example_validator
       ],
       enable_cache=True,
       metadata_connection_config=metadata.sqlite_metadata_connection_config(

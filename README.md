@@ -10,4 +10,3 @@ The pipeline that is implemented is the: [TFX Chicago Taxi Pipeline Example](htt
 | :------------------------ | :--------------------------------------------- |
 | `data`                    | The CSV raw data for the taxi pipeline example |
 | `pipeline.py`             | The full, vanilla TFX pipeline                 |
-| `pipeline_example_gen.py` | Video 3: The Example Gen Component             |
