@@ -1,3 +1,6 @@
+.vscode
+pipeline_out/
+
 .DS_Store
 bucket/
 tmpbucket/
