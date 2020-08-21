@@ -70,6 +70,11 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       statistics=statistics_gen.outputs['statistics'],
       infer_feature_shape=False)
 
+  # or schema_gen = ImporterNode(
+        # instance_name='schema_importer',
+        # source_uri=<uri>,
+        # artifact_type=standard_artifacts.Schema)
+
   example_validator = ExampleValidator(
       statistics=statistics_gen.outputs['statistics'],
       schema=schema_gen.outputs['schema'])
