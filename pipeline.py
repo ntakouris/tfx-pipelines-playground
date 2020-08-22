@@ -41,7 +41,7 @@ from tfx.utils.dsl_utils import external_input
 
 _pipeline_name = 'chicago_taxi_beam'
 
-_data_root = os.path.join(os.path.dirname(__file__), 'data', 'simple')
+_data_root = os.path.join(os.path.dirname(__file__), 'data', 'big_tipper_label')
 
 _tfx_root = os.path.join(os.path.dirname(__file__))
 _pipeline_root = os.path.join(os.path.dirname(__file__), 'pipeline_out', _pipeline_name)
@@ -79,11 +79,20 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       statistics=statistics_gen.outputs['statistics'],
       schema=schema_gen.outputs['schema'])
 
+  example_validator = ExampleValidator(
+      statistics=statistics_gen.outputs['statistics'],
+      schema=schema_gen.outputs['schema'])
+
+  transform = Transform(
+      examples=example_gen.outputs['examples'],
+      schema=schema_gen.outputs['schema'],
+      module_file='model.py')
+
   return pipeline.Pipeline(
       pipeline_name=pipeline_name,
       pipeline_root=pipeline_root,
       components=[
-          example_gen, statistics_gen, schema_gen, example_validator
+          example_gen, statistics_gen, schema_gen, example_validator, transform
       ],
       enable_cache=True,
       metadata_connection_config=metadata.sqlite_metadata_connection_config(
