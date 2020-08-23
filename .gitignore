@@ -1,6 +1,9 @@
 .vscode
-pipeline_out/
+tfx/
+bucket/
 metadata.db
+
+test.ipynb
 
 .DS_Store
 bucket/
