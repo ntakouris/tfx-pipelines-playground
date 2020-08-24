@@ -2,6 +2,7 @@
 tfx/
 bucket/
 metadata.db
+models_for_serving/
 
 test.ipynb
 

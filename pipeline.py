@@ -1,6 +1,6 @@
 # Lint as: python2, python3
 # Copyright 2019 Google LLC. All Rights Reserved.
-# Modification Copyright Theodoros Ntakouris
+# Modifications Copyright 2020 Theodoros Ntakouris
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,26 +21,17 @@ from typing import List, Text
 import absl
 import tensorflow_model_analysis as tfma
 
-from tfx.components import CsvExampleGen
-from tfx.components import Evaluator
-from tfx.components import ExampleValidator
-from tfx.components import Pusher
-from tfx.components import ResolverNode
-from tfx.components import SchemaGen
-from tfx.components import StatisticsGen
-from tfx.components import Trainer
-from tfx.components import Transform
+from tfx.components import CsvExampleGen, Evaluator, ExampleValidator, Pusher, ResolverNode, \
+  SchemaGen, StatisticsGen, Trainer, Transform, InfraValidator
+from tfx.components.tuner.component import Tuner
 from tfx.components.base import executor_spec
 from tfx.components.trainer.executor import GenericExecutor
 from tfx.dsl.experimental import latest_blessed_model_resolver
-from tfx.orchestration import metadata
-from tfx.orchestration import pipeline
+from tfx.orchestration import metadata, pipeline
 from tfx.orchestration.beam.beam_dag_runner import BeamDagRunner
-from tfx.proto import pusher_pb2
-from tfx.proto import trainer_pb2
+from tfx.proto import pusher_pb2, trainer_pb2, infra_validator_pb2
 from tfx.types import Channel
-from tfx.types.standard_artifacts import Model
-from tfx.types.standard_artifacts import ModelBlessing
+from tfx.types.standard_artifacts import Model, ModelBlessing
 from tfx.utils.dsl_utils import external_input
 
 _pipeline_name = 'chicago_taxi_pipeline'
@@ -62,8 +53,27 @@ _beam_pipeline_args = [
     '--direct_num_workers=0',
 ]
 
+_eval_config = tfma.EvalConfig(
+      model_specs=[tfma.ModelSpec(signature_name='serving_default', label_key='big_tipper')],
+      slicing_specs=[
+          tfma.SlicingSpec(),
+          tfma.SlicingSpec(feature_keys=['trip_start_hour'])
+      ],
+      metrics_specs=[
+          tfma.MetricsSpec(
+              thresholds={
+                  'binary_accuracy':
+                      tfma.config.MetricThreshold(
+                          value_threshold=tfma.GenericValueThreshold(
+                              lower_bound={'value': 0.5}),
+                          change_threshold=tfma.GenericChangeThreshold(
+                              direction=tfma.MetricDirection.HIGHER_IS_BETTER,
+                              absolute={'value': -1e-10}))
+              })
+      ])
+
 def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
-                     module_file: Text,
+                     module_file: Text, serving_model_dir: Text,
                      metadata_path: Text,
                      beam_pipeline_args: List[Text]) -> pipeline.Pipeline:
   examples = external_input(data_root)
@@ -79,6 +89,11 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       statistics=statistics_gen.outputs['statistics'],
       infer_feature_shape=True)
 
+  # or schema_gen = ImporterNode(	
+  # instance_name='schema_importer',	
+  # source_uri=<uri>,	
+  # artifact_type=standard_artifacts.Schema)
+
   # Performs anomaly detection based on statistics and data schema.
   example_validator = ExampleValidator(
       statistics=statistics_gen.outputs['statistics'],
@@ -90,15 +105,66 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       schema=schema_gen.outputs['schema'],
       module_file=module_file)
 
-  # Uses user-provided Python function that implements a model using TF-Learn.
+  tuner = Tuner(
+    module_file=module_file,
+    examples=transform.outputs['transformed_examples'],
+    transform_graph=transform.outputs['transform_graph'],
+    train_args=trainer_pb2.TrainArgs(num_steps=20),
+    eval_args=trainer_pb2.EvalArgs(num_steps=5))
+
   trainer = Trainer(
       module_file=module_file,
+      hyperparameters=tuner.outputs['best_hyperparameters'],
       custom_executor_spec=executor_spec.ExecutorClassSpec(GenericExecutor),
       examples=transform.outputs['transformed_examples'],
       transform_graph=transform.outputs['transform_graph'],
       schema=schema_gen.outputs['schema'],
       train_args=trainer_pb2.TrainArgs(num_steps=1000),
       eval_args=trainer_pb2.EvalArgs(num_steps=150))
+
+  # Get the latest blessed model for model validation.
+  model_resolver = ResolverNode(
+      instance_name='latest_blessed_model_resolver',
+      resolver_class=latest_blessed_model_resolver.LatestBlessedModelResolver,
+      model=Channel(type=Model),
+      model_blessing=Channel(type=ModelBlessing))
+
+  evaluator = Evaluator(
+      examples=example_gen.outputs['examples'],
+      model=trainer.outputs['model'],
+      baseline_model=model_resolver.outputs['model'],
+      # Change threshold will be ignored if there is no baseline (first run).
+      eval_config=_eval_config)
+
+  # Performs infra validation of a candidate model to prevent unservable model
+  # from being pushed.
+
+  # Setup docker first and then uncomment these lines
+
+  # infra_validator = InfraValidator(
+  #     model=trainer.outputs['model'],
+  #     examples=example_gen.outputs['examples'],
+  #     serving_spec=infra_validator_pb2.ServingSpec(
+  #         tensorflow_serving=infra_validator_pb2.TensorFlowServing(
+  #             tags=['latest']),
+  #         local_docker=infra_validator_pb2.LocalDockerConfig()),
+  #     request_spec=infra_validator_pb2.RequestSpec(
+  #         tensorflow_serving=infra_validator_pb2.TensorFlowServingRequestSpec()),
+  #     validation_spec=infra_validator_pb2.ValidationSpec(
+  #       max_loading_time_seconds=20,
+  #       num_tries=2
+  #   )
+  # )
+
+  # Checks whether the model passed the validation steps and pushes the model
+  # to a file destination if check passed.
+  pusher = Pusher(
+      model=trainer.outputs['model'],
+      model_blessing=evaluator.outputs['blessing'],
+      # infra_blessing=infra_validator.outputs['blessing'],
+      push_destination=pusher_pb2.PushDestination(
+          filesystem=pusher_pb2.PushDestination.Filesystem(
+              base_directory=serving_model_dir)))
 
   return pipeline.Pipeline(
       pipeline_name=pipeline_name,
@@ -109,9 +175,14 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
           schema_gen,
           example_validator,
           transform,
-          trainer
+          tuner,
+          trainer,
+          model_resolver,
+          evaluator,
+          # infra_validator,
+          pusher
       ],
-      enable_cache=False,
+      enable_cache=True,
       metadata_connection_config=metadata.sqlite_metadata_connection_config(
           metadata_path),
       beam_pipeline_args=beam_pipeline_args)
@@ -126,6 +197,7 @@ if __name__ == '__main__':
       _create_pipeline(
           pipeline_name=_pipeline_name,
           pipeline_root=_pipeline_root,
+          serving_model_dir=os.path.join(os.path.dirname(__file__), 'models_for_serving'),
           data_root=_data_root,
           module_file=_module_file,
           metadata_path=_metadata_path,

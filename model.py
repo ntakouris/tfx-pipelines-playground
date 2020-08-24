@@ -26,7 +26,12 @@ import absl
 import tensorflow as tf
 import tensorflow_transform as tft
 
+import kerastuner
+
 from tfx.components.trainer.executor import TrainerFnArgs
+
+from tfx.components.trainer.fn_args_utils import FnArgs
+from tfx.components.tuner.component import TunerFnResult
 
 # Categorical features are assumed to each have a maximum value in the dataset.
 _MAX_CATEGORICAL_FEATURE_VALUES = [24, 31, 12]
@@ -144,8 +149,22 @@ def _input_fn(file_pattern: List[Text],
 
   return dataset
 
+_DNN_HIDDEN_UNITS_0 = 'dnn_hidden_unit_0'
+_DNN_HIDDEN_UNITS_1 = 'dnn_hidden_unit_1'
+_DNN_HIDDEN_UNITS_2 = 'dnn_hidden_unit_2'
 
-def _build_keras_model() -> tf.keras.Model:
+_DNN_HIDDEN_UNITS = [_DNN_HIDDEN_UNITS_0, _DNN_HIDDEN_UNITS_1, _DNN_HIDDEN_UNITS_2]
+
+def _get_hyperparams() -> kerastuner.HyperParameters:
+  hp = kerastuner.HyperParameters()
+
+  hp.Choice(_DNN_HIDDEN_UNITS_0, [100, 150])
+  hp.Choice(_DNN_HIDDEN_UNITS_1, [70, 50])
+  hp.Choice(_DNN_HIDDEN_UNITS_2, [15, 25])
+
+  return hp
+
+def _build_keras_model(hp: kerastuner.HyperParameters) -> tf.keras.Model:
   """Creates a DNN Keras model for classifying taxi data.
   
   Returns:
@@ -178,10 +197,13 @@ def _build_keras_model() -> tf.keras.Model:
       for categorical_column in categorical_columns
   ]
 
+  hp = [hp.get(k) for k in _DNN_HIDDEN_UNITS]
+  units = [int(x) for x in hp]
+
   model = _wide_and_deep_classifier(
       wide_columns=indicator_column,
       deep_columns=real_valued_columns,
-      dnn_hidden_units=[100, 70, 50, 25])
+      dnn_hidden_units=units)
   return model
 
 
@@ -284,9 +306,13 @@ def run_fn(fn_args: TrainerFnArgs):
   train_dataset = _input_fn(fn_args.train_files, tf_transform_output, 40)
   eval_dataset = _input_fn(fn_args.eval_files, tf_transform_output, 40)
 
+  hparams = fn_args.hyperparameters
+  if type(hparams) is dict and 'values' in hparams.keys():
+    hparams = hparams['values']
+
   mirrored_strategy = tf.distribute.MirroredStrategy()
   with mirrored_strategy.scope():
-    model = _build_keras_model()
+    model = _build_keras_model(hparams)
 
   try:
     log_dir = fn_args.model_run_dir
@@ -314,3 +340,46 @@ def run_fn(fn_args: TrainerFnArgs):
                                             name='examples')),
   }
   model.save(fn_args.serving_model_dir, save_format='tf', signatures=signatures)
+
+
+# TFX Tuner will call this function.
+def tuner_fn(fn_args: FnArgs) -> TunerFnResult:
+  """Build the tuner using the KerasTuner API.
+  Args:
+    fn_args: Holds args as name/value pairs.
+      - working_dir: working dir for tuning.
+      - train_files: List of file paths containing training tf.Example data.
+      - eval_files: List of file paths containing eval tf.Example data.
+      - train_steps: number of train steps.
+      - eval_steps: number of eval steps.
+      - schema_path: optional schema of the input data.
+      - transform_graph_path: optional transform graph produced by TFT.
+  Returns:
+    A namedtuple contains the following:
+      - tuner: A BaseTuner that will be used for tuning.
+      - fit_kwargs: Args to pass to tuner's run_trial function for fitting the
+                    model , e.g., the training and validation dataset. Required
+                    args depend on the above tuner's implementation.
+  """
+
+  tuner = kerastuner.RandomSearch(
+      _build_keras_model,
+      max_trials=6,
+      hyperparameters=_get_hyperparams(),
+      allow_new_entries=False,
+      objective=kerastuner.Objective('binary_accuracy', 'max'),
+      directory=fn_args.working_dir,
+      project_name='chicago_taxi_pipeline_tuning')
+
+  transform_graph = tft.TFTransformOutput(fn_args.transform_graph_path)
+  train_dataset = _input_fn(fn_args.train_files, transform_graph)
+  eval_dataset = _input_fn(fn_args.eval_files, transform_graph)
+
+  return TunerFnResult(
+      tuner=tuner,
+      fit_kwargs={
+          'x': train_dataset,
+          'validation_data': eval_dataset,
+          'steps_per_epoch': fn_args.train_steps,
+          'validation_steps': fn_args.eval_steps
+      })
