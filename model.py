@@ -307,8 +307,14 @@ def run_fn(fn_args: TrainerFnArgs):
   eval_dataset = _input_fn(fn_args.eval_files, tf_transform_output, 40)
 
   hparams = fn_args.hyperparameters
-  if type(hparams) is dict and 'values' in hparams.keys():
-    hparams = hparams['values']
+  if hparams:
+    if type(hparams) is dict and 'values' in hparams.keys():
+      hparams = hparams['values']
+  else:
+    hparams = kerastuner.HyperParameters()
+    hparams.Fixed(_DNN_HIDDEN_UNITS_0, 100)
+    hparams.Fixed(_DNN_HIDDEN_UNITS_1, 70)
+    hparams.Fixed(_DNN_HIDDEN_UNITS_2, 2)
 
   mirrored_strategy = tf.distribute.MirroredStrategy()
   with mirrored_strategy.scope():

@@ -116,7 +116,7 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
       module_file=module_file,
       hyperparameters=tuner.outputs['best_hyperparameters'],
       custom_executor_spec=executor_spec.ExecutorClassSpec(GenericExecutor),
-      examples=transform.outputs['transformed_examples'],
+      transformed_examples=transform.outputs['transformed_examples'],
       transform_graph=transform.outputs['transform_graph'],
       schema=schema_gen.outputs['schema'],
       train_args=trainer_pb2.TrainArgs(num_steps=1000),
@@ -182,14 +182,14 @@ def _create_pipeline(pipeline_name: Text, pipeline_root: Text, data_root: Text,
           # infra_validator,
           pusher
       ],
-      enable_cache=True,
+      enable_cache=False,
       metadata_connection_config=metadata.sqlite_metadata_connection_config(
           metadata_path),
       beam_pipeline_args=beam_pipeline_args)
 
 
 # To run this pipeline from the python CLI:
-#   $python taxi_pipeline_native_keras.py
+#   $python pipeline.py
 if __name__ == '__main__':
   absl.logging.set_verbosity(absl.logging.INFO)
 
