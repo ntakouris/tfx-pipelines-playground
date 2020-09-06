@@ -1,6 +1,6 @@
-# YouTube TFX Pipelines
+# TFX Pipelines Playground
 
-An introductory video series for End to End Machine Learning Pipelines using Tensorflow Extended.
+This is basically the TFX Example of chicago taxi trips pipeline with some extra stuff going on like Tuning and some notebooks for visualization.
 
 ## Repository Contents
 

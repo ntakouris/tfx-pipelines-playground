@@ -1,2 +1,1 @@
 tfx<=0.22.2
-fluent-tfx
