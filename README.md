@@ -12,7 +12,6 @@ The pipeline that is implemented is the: [TFX Chicago Taxi Pipeline Example](htt
 | :----------------------------------------- | :--------------------------------------------------------------------------------------------- |
 | `data`                                     | The CSV raw data for the taxi pipeline example                                                 |
 | `pipeline.py`                              | The full, vanilla TFX pipeline declaration and component configuration                         |
-| `pipeline_e2e_test.py`                     | End to End Test for the `pipeline.py`                                                          |
 | `model.py`                                 | Preprocessing, Model Creation, Training, Hyperparameter tuning                                 |
 | `example_data_visualization.ipynb`         | ExampleValidator and StatisticsGen: Raw data and schema visualization notebook through TFDV    |
 | `model_analysis_visualization.ipynb`       | Evaluator TFMA result visualization notebook                                                   |
