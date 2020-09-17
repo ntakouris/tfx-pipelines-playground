@@ -27,9 +27,4 @@ jobs:
           pip install -r requirements.txt
       - name: Test with pytest
         run: |
-          pytest --cov=model.py --cov=pipeline.py --cov-report=xml
-      - name: Upload to codecov
-        uses: codecov/codecov-action@v1
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: true
+          pytest

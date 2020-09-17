@@ -58,6 +58,7 @@ class PipelineEndToEndTest(tf.test.TestCase):
     self.assertExecutedOnce('StatisticsGen')
     self.assertExecutedOnce('Trainer')
     self.assertExecutedOnce('Transform')
+    # slack notifier component does not produce output artifact
 
   def testTaxiPipelineBeam(self):
     BeamDagRunner().run(
@@ -77,8 +78,9 @@ class PipelineEndToEndTest(tf.test.TestCase):
     with metadata.Metadata(metadata_config) as m:
       artifact_count = len(m.store.get_artifacts())
       execution_count = len(m.store.get_executions())
-      self.assertGreaterEqual(artifact_count, execution_count)
-      self.assertEqual(10, execution_count)
+      # slack notifier does not produce artifacts
+      self.assertGreaterEqual(artifact_count, execution_count - 1) 
+      self.assertEqual(11, execution_count)
 
     self.assertPipelineExecution()
 

@@ -16,10 +16,12 @@
 """Chicago taxi example using TFX."""
 
 import os
+import requests, json
 import tensorflow as tf
-from typing import List, Text
+from typing import List, Text, Optional, Any
 
 import absl
+from absl import logging
 import tensorflow_model_analysis as tfma
 
 from tfx.components import CsvExampleGen, Evaluator, ExampleValidator, Pusher, ResolverNode, \
@@ -34,6 +36,10 @@ from tfx.proto import pusher_pb2, trainer_pb2, infra_validator_pb2
 from tfx.types import Channel
 from tfx.types.standard_artifacts import Model, ModelBlessing
 from tfx.utils.dsl_utils import external_input
+
+from tfx.dsl.component.experimental.annotations import InputArtifact, Parameter, OutputDict
+from tfx.dsl.component.experimental.decorators import component
+from tfx.types.standard_artifacts import Model, ExampleAnomalies, ModelEvaluation
 
 _pipeline_name = 'chicago_taxi_pipeline'
 
@@ -61,19 +67,49 @@ _eval_config = tfma.EvalConfig(
         tfma.SlicingSpec(feature_keys=['trip_start_hour'])
     ],
     metrics_specs=[
-        tfma.MetricsSpec(
-            metrics=[
-                tfma.MetricConfig(class_name='BinaryAccuracy',
-                  threshold=tfma.MetricThreshold(
-                      value_threshold=tfma.GenericValueThreshold(
-                          lower_bound={'value': 0.5}),
-                      change_threshold=tfma.GenericChangeThreshold(
-                          direction=tfma.MetricDirection.HIGHER_IS_BETTER,
-                          absolute={'value': -1e-10})))
-            ]
-        )
-    ],)
+        tfma.MetricsSpec(metrics=[
+            tfma.MetricConfig(
+                class_name='BinaryAccuracy',
+                threshold=tfma.MetricThreshold(
+                    value_threshold=tfma.GenericValueThreshold(
+                        lower_bound={'value': 0.5}),
+                    change_threshold=tfma.GenericChangeThreshold(
+                        direction=tfma.MetricDirection.HIGHER_IS_BETTER,
+                        absolute={'value': -1e-10})))
+        ])
+    ],
+)
 
+
+@component
+def SlackNotifierComponent(
+    example_anomalies: InputArtifact[ExampleAnomalies],
+    model: InputArtifact[Model],
+    model_evaluation: InputArtifact[ModelEvaluation],
+    slack_url: Parameter[Text] = None
+) -> None:
+    logging.info(f'Running SlackNotifierComponent for slack_url: {slack_url}')
+    example_anomalies_uri = example_anomalies.uri  # /anomalies.pbtxt
+    model_uri = model.uri  # /logs or /serving_model_dir. For TFX >= 0.22 use ModelRun for logs
+    model_eval_uri = model_evaluation.uri  # /metrics or /plots or /validations
+
+    if slack_url is None:
+        logging.warn(
+            'SlackNotifierComponent: slack_url is none. Skipping component execution'
+        )
+        return None
+
+    slack_data = {
+        'text':
+        f':spaghetti: \n anomalies: {example_anomalies_uri} \n model: {model_uri} \n eval results: {model_eval_uri} \n'
+    }
+
+    response = requests.post(slack_url,
+                             data=json.dumps(slack_data),
+                             headers={'Content-Type': 'application/json'})
+
+    if response.status_code != 200:
+        logging.warn(f'Status Code: {response.status_code} \n {response.text}')
 
 def _create_pipeline(pipeline_name: Text,
                      pipeline_root: Text,
@@ -82,6 +118,7 @@ def _create_pipeline(pipeline_name: Text,
                      serving_model_dir: Text,
                      metadata_path: Text,
                      beam_pipeline_args: List[Text],
+                     slack_url: Text = None,
                      enable_cache: bool = True) -> pipeline.Pipeline:
     examples = external_input(data_root)
 
@@ -171,6 +208,13 @@ def _create_pipeline(pipeline_name: Text,
             filesystem=pusher_pb2.PushDestination.Filesystem(
                 base_directory=serving_model_dir)))
 
+    slack_component = SlackNotifierComponent(
+      example_anomalies=example_validator.outputs['anomalies'],
+      model=trainer.outputs['model'],
+      model_evaluation=evaluator.outputs['evaluation'],
+      slack_url=slack_url
+    )
+
     return pipeline.Pipeline(
         pipeline_name=pipeline_name,
         pipeline_root=pipeline_root,
@@ -185,7 +229,8 @@ def _create_pipeline(pipeline_name: Text,
             model_resolver,
             evaluator,
             # infra_validator,
-            pusher
+            pusher,
+            slack_component
         ],
         enable_cache=enable_cache,
         metadata_connection_config=metadata.sqlite_metadata_connection_config(
@@ -196,15 +241,16 @@ def _create_pipeline(pipeline_name: Text,
 # To run this pipeline from the python CLI:
 #   $python pipeline.py
 if __name__ == '__main__':
-    absl.logging.set_verbosity(absl.logging.INFO)
+  absl.logging.set_verbosity(absl.logging.INFO)
 
-    BeamDagRunner().run(
-        _create_pipeline(pipeline_name=_pipeline_name,
-                         pipeline_root=_pipeline_root,
-                         serving_model_dir=os.path.join(
-                             os.path.dirname(__file__), 'models_for_serving'),
-                         data_root=_data_root,
-                         module_file=_module_file,
-                         metadata_path=_metadata_path,
-                         beam_pipeline_args=_beam_pipeline_args,
-                         enable_cache=False))
+  BeamDagRunner().run(
+      _create_pipeline(pipeline_name=_pipeline_name,
+                        pipeline_root=_pipeline_root,
+                        serving_model_dir=os.path.join(
+                            os.path.dirname(__file__), 'models_for_serving'),
+                        data_root=_data_root,
+                        module_file=_module_file,
+                        metadata_path=_metadata_path,
+                        slack_url=os.environ.get('SLACK_URL'),
+                        beam_pipeline_args=_beam_pipeline_args,
+                        enable_cache=True))
