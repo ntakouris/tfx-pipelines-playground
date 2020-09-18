@@ -2,8 +2,6 @@
 
 This is basically the TFX Example of chicago taxi trips pipeline with some extra stuff going on like Tuning and some notebooks for visualization.
 
-![Tests](https://github.com/ntakouris/tfx-pipelines-playground/workflows/Test%20Python%20Package/badge.svg)
-
 ## Repository Contents
 
 The pipeline that is implemented is the: [TFX Chicago Taxi Pipeline Example](https://github.com/tensorflow/tfx/tree/master/tfx/examples/chicago_taxi_pipeline), slightly modified.
